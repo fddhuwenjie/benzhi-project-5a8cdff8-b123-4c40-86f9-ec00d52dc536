@@ -253,7 +253,13 @@ func (s *Store) AppendAudit(caseID, action string, data map[string]string) model
 	sum := sha256.Sum256(append([]byte(prev+action+ev.At.Format(time.RFC3339Nano)), raw...))
 	ev.Digest = hex.EncodeToString(sum[:])
 	s.audit[caseID] = append(s.audit[caseID], ev)
-	s.inspection[caseID] = model.AuditInspection{Healthy: true, CheckedAt: time.Now().UTC()}
+	// Re-run the full chain inspection rather than assuming the append left
+	// the chain healthy. A tampered audit file loaded on restart is already
+	// marked unhealthy; appending a new event must not mask that, otherwise
+	// evidence retrieval and certificate verification would silently treat a
+	// broken chain as healthy. inspectAudit recomputes every link, so healthy
+	// chains remain healthy and broken chains stay broken after the append.
+	s.inspection[caseID] = inspectAudit(s.audit[caseID])
 	if b, e := json.Marshal(s.audit[caseID]); e == nil {
 		_ = os.WriteFile(filepath.Join(s.dir, caseID+".audit"), b, 0644)
 	}
