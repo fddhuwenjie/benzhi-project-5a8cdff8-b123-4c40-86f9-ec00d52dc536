@@ -41,19 +41,27 @@ type CertificatePreview struct {
 }
 
 func (s *Service) Preview(id string) (CertificatePreview, error) {
-	s.previewMu.RLock()
-	if cached, ok := s.previews[id]; ok {
-		s.previewMu.RUnlock()
-		return cached, nil
-	}
-	s.previewMu.RUnlock()
 	c, ok := s.store.GetCase(id)
 	if !ok {
 		return CertificatePreview{}, fmt.Errorf("案件不存在")
 	}
+	// Re-evaluate issuance readiness against the current case state before
+	// trusting any cached preview. Any mutation that advanced the case (for
+	// example issuing the certificate and moving it to released) must surface a
+	// failed precheck instead of returning a stale review-era preview, lock and
+	// revision.
 	check, _ := s.IssueCheck(id)
 	if !check.Ready {
+		s.previewMu.Lock()
+		delete(s.previews, id)
+		s.previewMu.Unlock()
 		return CertificatePreview{}, fmt.Errorf("签发预检未通过: %s", strings.Join(check.Blockers, ";"))
+	}
+	s.previewMu.RLock()
+	cached, ok := s.previews[id]
+	s.previewMu.RUnlock()
+	if ok && cached.Revision == c.Revision {
+		return cached, nil
 	}
 	bd := c.Baseline.Fingerprint
 	bs := batchSummary(*c)
