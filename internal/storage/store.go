@@ -23,7 +23,14 @@ type Store struct {
 	evidence       map[string][]byte
 	evidenceDigest map[string]string
 	inspection     map[string]model.AuditInspection
-	timelineCache  map[string][]model.AuditEvent
+	timelineCache  map[string]map[timelineKey][]model.AuditEvent
+}
+
+// timelineKey captures the full set of filters accepted by Timeline so that
+// queries with different action/from/to combinations never share a snapshot.
+type timelineKey struct {
+	action    string
+	from, to  time.Time
 }
 
 type CaseFilter struct {
@@ -34,7 +41,7 @@ type CaseFilter struct {
 }
 
 func New(dir string) *Store {
-	s := &Store{dir: dir, cases: map[string]*model.CalibrationCase{}, requests: map[string][]byte{}, audit: map[string][]model.AuditEvent{}, evidence: map[string][]byte{}, evidenceDigest: map[string]string{}, inspection: map[string]model.AuditInspection{}, timelineCache: map[string][]model.AuditEvent{}}
+	s := &Store{dir: dir, cases: map[string]*model.CalibrationCase{}, requests: map[string][]byte{}, audit: map[string][]model.AuditEvent{}, evidence: map[string][]byte{}, evidenceDigest: map[string]string{}, inspection: map[string]model.AuditInspection{}, timelineCache: map[string]map[timelineKey][]model.AuditEvent{}}
 	_ = os.MkdirAll(dir, 0755)
 	if es, e := os.ReadDir(dir); e == nil {
 		for _, x := range es {
@@ -392,11 +399,14 @@ func (s *Store) EvidenceManifest(caseID string) (map[string]any, error) {
 	return map[string]any{"case_id": caseID, "certificate_digest": c.Certificate.CertificateDigest, "content_digest": hex.EncodeToString(sum[:]), "inspection": s.AuditInspection(caseID), "components": map[string]any{"case": map[string]any{"count": 1}, "baseline": map[string]any{"count": 1, "digest": c.Baseline.Fingerprint}, "batches": map[string]any{"count": len(c.Batches)}, "anomalies": map[string]any{"count": len(c.Anomalies)}, "reviews": map[string]any{"count": len(c.Reviews)}, "remediations": map[string]any{"count": len(c.Remediations)}, "audit": map[string]any{"count": len(s.Audit(caseID)), "head": c.Certificate.AuditHead}}}, nil
 }
 func (s *Store) Timeline(caseID, action string, from, to time.Time) []model.AuditEvent {
+	key := timelineKey{action: action, from: from, to: to}
 	s.mu.RLock()
-	if cached, ok := s.timelineCache[caseID]; ok {
-		out := append([]model.AuditEvent(nil), cached...)
-		s.mu.RUnlock()
-		return out
+	if inner, ok := s.timelineCache[caseID]; ok {
+		if cached, ok := inner[key]; ok {
+			out := append([]model.AuditEvent(nil), cached...)
+			s.mu.RUnlock()
+			return out
+		}
 	}
 	s.mu.RUnlock()
 	events := s.Audit(caseID)
@@ -414,7 +424,12 @@ func (s *Store) Timeline(caseID, action string, from, to time.Time) []model.Audi
 		out = append(out, e)
 	}
 	s.mu.Lock()
-	s.timelineCache[caseID] = append([]model.AuditEvent(nil), out...)
+	inner, ok := s.timelineCache[caseID]
+	if !ok {
+		inner = map[timelineKey][]model.AuditEvent{}
+		s.timelineCache[caseID] = inner
+	}
+	inner[key] = append([]model.AuditEvent(nil), out...)
 	s.mu.Unlock()
 	return out
 }
