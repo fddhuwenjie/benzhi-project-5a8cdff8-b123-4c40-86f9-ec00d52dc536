@@ -191,7 +191,6 @@ func (s *Store) SaveCase(c *model.CalibrationCase) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := cloneCase(c)
-	s.cases[c.CaseID] = cp
 	b, e := json.Marshal(cp)
 	if e != nil {
 		return e
@@ -200,7 +199,14 @@ func (s *Store) SaveCase(c *model.CalibrationCase) error {
 	if e = os.WriteFile(tmp, b, 0644); e == nil {
 		e = os.Rename(tmp, filepath.Join(s.dir, c.CaseID+".json"))
 	}
-	return e
+	if e != nil {
+		// Only the durable copy authorizes visibility: leave the in-memory
+		// state at its last successfully persisted value so failed writes do
+		// not pollute queries, listings or duplicate-creation checks.
+		return e
+	}
+	s.cases[c.CaseID] = cp
+	return nil
 }
 func (s *Store) GetCase(id string) (*model.CalibrationCase, bool) {
 	s.mu.RLock()
