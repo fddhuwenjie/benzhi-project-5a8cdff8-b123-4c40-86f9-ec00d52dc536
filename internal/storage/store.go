@@ -331,10 +331,20 @@ func (s *Store) Evidence(caseID string) ([]byte, error) {
 // sidecar digest without generating or persisting anything. It is used by
 // read-only certificate verification so a missing archive is reported rather
 // than silently repaired.
+//
+// In persisted mode (dir != "") the on-disk evidence archive is the source of
+// truth: a missing evidence JSON file is reported as not existing instead of
+// falling back to a stale in-memory copy left over from startup or a prior
+// generate. In pure-memory mode the in-memory archive is the only source of
+// truth and the original fallback behavior is preserved.
 func (s *Store) EvidenceSnapshot(caseID string) ([]byte, string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if b, err := os.ReadFile(filepath.Join(s.dir, "evidence-"+caseID+".json")); err == nil {
+	if s.dir != "" {
+		b, err := os.ReadFile(filepath.Join(s.dir, "evidence-"+caseID+".json"))
+		if err != nil {
+			return nil, "", false
+		}
 		digest := s.evidenceDigest[caseID]
 		if sidecar, e := os.ReadFile(filepath.Join(s.dir, "evidence-"+caseID+".sha256")); e == nil {
 			digest = strings.TrimSpace(string(sidecar))
@@ -351,10 +361,20 @@ func (s *Store) EvidenceSnapshot(caseID string) ([]byte, string, bool) {
 // AuditSnapshot rereads the persisted audit file when available. The bool is
 // false when the file exists but cannot be decoded, allowing callers to report
 // a broken chain instead of silently using a stale in-memory copy.
+//
+// In persisted mode (dir != "") the on-disk audit file is the source of truth:
+// a missing audit file is reported as not existing instead of falling back to a
+// stale in-memory copy left over from startup. In pure-memory mode the
+// in-memory audit log is the only source of truth and the original fallback
+// behavior is preserved.
 func (s *Store) AuditSnapshot(caseID string) ([]model.AuditEvent, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if b, err := os.ReadFile(filepath.Join(s.dir, caseID+".audit")); err == nil {
+	if s.dir != "" {
+		b, err := os.ReadFile(filepath.Join(s.dir, caseID+".audit"))
+		if err != nil {
+			return nil, false
+		}
 		var events []model.AuditEvent
 		if json.Unmarshal(b, &events) != nil {
 			return nil, false
