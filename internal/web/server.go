@@ -437,16 +437,16 @@ func (s *Server) caseAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		c, e := s.calib.AddBatch(id, q.ExpectedRevision, model.MeasurementBatch{Phase: q.Phase, Values: q.Values, SampleCount: q.SampleCount, TemperatureC: q.TemperatureC, HumidityPercent: q.HumidityPercent})
-		if e != nil {
-			jsonErr(w, e)
-			return
-		}
 		select {
 		case <-r.Context().Done():
 			jsonErr(w, fmt.Errorf("请求已取消: %w", r.Context().Err()))
 			return
 		default:
+		}
+		c, e := s.calib.AddBatch(id, q.ExpectedRevision, model.MeasurementBatch{Phase: q.Phase, Values: q.Values, SampleCount: q.SampleCount, TemperatureC: q.TemperatureC, HumidityPercent: q.HumidityPercent})
+		if e != nil {
+			jsonErr(w, e)
+			return
 		}
 		s.remember(r, c)
 		jsonOK(w, c)
